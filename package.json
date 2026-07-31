@@ -1,0 +1,8 @@
+{
+  "name": "ascend",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "shared"
+  ]
+}
