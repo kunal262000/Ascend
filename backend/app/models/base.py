@@ -3,15 +3,15 @@ from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
-
-from app.core.database import async_session_factory
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-class Base:
-    """Mixin providing common columns and utilities."""
+class Base(DeclarativeBase):
+    """Declarative base providing a shared UUID primary key column."""
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
 
 
 class TimestampMixin:
