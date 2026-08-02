@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { useCart } from "@/contexts/cart-context";
 
 const NAV_LINKS = [
   { href: "/products", label: "Shop" },
@@ -24,6 +25,7 @@ const NAV_LINKS = [
 
 export function Header() {
   const { isAuthenticated, isLoading, user, logout } = useAuth();
+  const { itemCount, openCart } = useCart();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -105,11 +107,10 @@ export function Header() {
             </>
           )}
 
-          <Button variant="ghost" size="icon" asChild>
-            <Link href="/cart">
-              <ShoppingCart className="h-5 w-5" />
-              <span className="sr-only">Cart</span>
-            </Link>
+          <Button variant="ghost" size="icon" className="relative" onClick={openCart}>
+            <ShoppingCart className="h-5 w-5" />
+            {itemCount > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#d4a574] px-1 text-[10px] font-bold text-black">{itemCount > 99 ? "99+" : itemCount}</span>}
+            <span className="sr-only">Cart</span>
           </Button>
           <Button
             variant="ghost"

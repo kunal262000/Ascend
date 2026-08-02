@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
 import { ChevronRight, Star, ShoppingCart, ShieldCheck } from "lucide-react";
@@ -14,6 +14,7 @@ import { QuantitySelector } from "@/components/quantity-selector";
 import { ProductGrid } from "@/components/product-grid";
 import { fetchProductBySlug, fetchProducts } from "@/lib/api";
 import type { Product } from "@ascend/shared";
+import { useCart } from "@/contexts/cart-context";
 
 const SIZE_CHART = [
   { size: "S", chest: '38"', length: '28"', sleeve: '8.5"' },
@@ -45,6 +46,8 @@ function StarRating({ rating, count }: { rating: number; count: number }) {
 
 export default function ProductDetailPage() {
   const params = useParams();
+  const router = useRouter();
+  const { addItem, openCart } = useCart();
   const slug = params.slug as string;
 
   const [selectedSize, setSelectedSize] = useState("");
@@ -214,11 +217,19 @@ export default function ProductDetailPage() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row">
-              <Button size="lg" className="flex-1">
+              <Button size="lg" className="flex-1" onClick={() => {
+                const variant = product.variants?.find((v) => v.is_active && (!selectedSize || v.size === selectedSize) && (!selectedColor || v.color === selectedColor));
+                addItem(product, variant, quantity);
+                openCart();
+              }}>
                 <ShoppingCart className="mr-2 h-5 w-5" />
                 Add to Cart
               </Button>
-              <Button variant="outline" size="lg" className="flex-1">
+              <Button variant="outline" size="lg" className="flex-1" onClick={() => {
+                const variant = product.variants?.find((v) => v.is_active && (!selectedSize || v.size === selectedSize) && (!selectedColor || v.color === selectedColor));
+                addItem(product, variant, quantity);
+                router.push("/checkout");
+              }}>
                 Buy Now
               </Button>
             </div>

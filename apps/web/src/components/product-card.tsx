@@ -3,6 +3,8 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ShoppingCart } from "lucide-react";
+import { useState } from "react";
+import { useCart } from "@/contexts/cart-context";
 import Link from "next/link";
 import type { Product } from "@ascend/shared";
 
@@ -12,6 +14,8 @@ interface ProductCardProps {
 }
 
 export function ProductCard({ product, className }: ProductCardProps) {
+  const { addItem, openCart } = useCart();
+  const [added, setAdded] = useState(false);
   const hasDiscount =
     product.compare_at_price && product.compare_at_price > product.price;
   const discountPercent = hasDiscount
@@ -80,11 +84,13 @@ export function ProductCard({ product, className }: ProductCardProps) {
           className="mt-auto w-full"
           onClick={(e) => {
             e.preventDefault();
-            // TODO: Add to cart logic
+            addItem(product, product.variants?.find((variant) => variant.is_active), 1);
+            setAdded(true);
+            window.setTimeout(() => setAdded(false), 1500);
           }}
         >
           <ShoppingCart className="mr-2 h-4 w-4" />
-          Add to Cart
+          {added ? "Added ✓" : "Add to Cart"}
         </Button>
       </div>
     </div>
