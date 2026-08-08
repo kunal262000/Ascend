@@ -42,7 +42,11 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginForm) => {
     setApiError(null);
     try {
-      await login(data.email, data.password);
+      const redirectTo =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("redirect") ?? undefined
+          : undefined;
+      await login(data.email, data.password, redirectTo);
     } catch (err: unknown) {
       const message =
         (err as { response?: { data?: { detail?: string } } })?.response?.data

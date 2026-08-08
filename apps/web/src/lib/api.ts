@@ -124,6 +124,75 @@ apiClient.interceptors.response.use(
   }
 );
 
+// ── Checkout API ───────────────────────────────────────────────
+
+export interface Address {
+  id: string;
+  user_id: string;
+  type: string;
+  full_name: string;
+  phone: string;
+  line1: string;
+  line2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  is_default: boolean;
+}
+
+export interface AddressInput {
+  full_name: string;
+  phone: string;
+  line1: string;
+  line2?: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  is_default?: boolean;
+}
+
+export interface OrderItemResponse {
+  id: string;
+  product_id: string;
+  variant_id: string | null;
+  product_name: string | null;
+  product_slug: string | null;
+  quantity: number;
+  unit_price: string;
+  total_price: string;
+}
+
+export interface OrderResponse {
+  id: string;
+  status: string;
+  subtotal: string;
+  shipping_cost: string;
+  tax: string;
+  discount: string;
+  total: string;
+  coupon_code: string | null;
+  payment_session_id: string | null;
+  created_at: string | null;
+  items: OrderItemResponse[];
+}
+
+export interface CreateOrderInput {
+  shipping_address_id: string;
+  billing_address_id?: string;
+  coupon_code?: string;
+}
+
+export const checkoutApi = {
+  getAddresses: () =>
+    apiClient.get<Address[]>("/api/v1/users/me/addresses").then(({ data }) => data),
+  createAddress: (payload: AddressInput) =>
+    apiClient.post<Address>("/api/v1/users/me/addresses", payload).then(({ data }) => data),
+  createOrder: (payload: CreateOrderInput) =>
+    apiClient.post<OrderResponse>("/api/v1/orders", payload).then(({ data }) => data),
+  getOrder: (id: string) =>
+    apiClient.get<OrderResponse>(`/api/v1/orders/${id}`).then(({ data }) => data),
+};
+
 // ── Product API ────────────────────────────────────────────────
 
 export interface ProductListParams {

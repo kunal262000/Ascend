@@ -20,7 +20,7 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, redirectTo?: string) => Promise<void>;
   register: (
     email: string,
     password: string,
@@ -128,14 +128,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── login ────────────────────────────────────────────────────
 
   const login = useCallback(
-    async (email: string, password: string) => {
+    async (email: string, password: string, redirectTo?: string) => {
       const { data } = await apiClient.post<AuthResponse>(
         "/api/v1/auth/login",
         { email, password }
       );
       storeAuth(data.access_token, data.user);
       setState({ user: data.user, isAuthenticated: true, isLoading: false });
-      router.push("/");
+      // Only allow same-app relative paths to avoid open redirects.
+      const safePath =
+        redirectTo && redirectTo.startsWith("/") && !redirectTo.startsWith("//")
+          ? redirectTo
+          : "/";
+      router.push(safePath);
     },
     [router]
   );
