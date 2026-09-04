@@ -1,30 +1,245 @@
-import axios from "axios";
+import apiClient from "./api-client";
+import type {
+  Product,
+  Category,
+  AuthResponse,
+  User,
+} from "@ascend/shared";
 
-const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
-  headers: { "Content-Type": "application/json" },
-  withCredentials: true,
-});
+// ── Auth API ───────────────────────────────────────────────────
 
-apiClient.interceptors.request.use((config) => {
-  if (typeof window !== "undefined") {
-    const token = localStorage.getItem("access_token");
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+export const authApi = {
+  async login(email: string, password: string): Promise<AuthResponse> {
+    const { data } = await apiClient.post<AuthResponse>(
+      "/api/v1/auth/login",
+      { email, password }
+    );
+    return data;
+  },
+
+  async register(payload: {
+    email: string;
+    password: string;
+    full_name: string;
+  }): Promise<AuthResponse> {
+    const { data } = await apiClient.post<AuthResponse>(
+      "/api/v1/auth/register",
+      payload
+    );
+    return data;
+  },
+
+  async refresh(): Promise<AuthResponse> {
+    const { data } = await apiClient.post<AuthResponse>(
+      "/api/v1/auth/refresh"
+    );
+    return data;
+  },
+
+  async getProfile(): Promise<User> {
+    const { data } = await apiClient.get<User>("/api/v1/auth/me");
+    return data;
+  },
+};
+
+// ── Response interceptor for 401 → refresh → retry ─────────────
+
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+}> = [];
+
+function processQueue(error: unknown, token: string | null = null) {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
     }
-  }
-  return config;
-});
+  });
+  failedQueue = [];
+}
 
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401 && typeof window !== "undefined") {
-      localStorage.removeItem("access_token");
-      window.location.href = "/login";
+  async (error) => {
+    const originalRequest = error.config;
+
+    // Only attempt refresh on 401 and not already retried
+    if (error.response?.status !== 401 || originalRequest._retry) {
+      return Promise.reject(error);
     }
-    return Promise.reject(error);
+
+    // Don't try to refresh if the failing request was itself a refresh call
+    if (originalRequest.url === "/api/v1/auth/refresh") {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("auth_user");
+        window.location.href = "/login";
+      }
+      return Promise.reject(error);
+    }
+
+    if (isRefreshing) {
+      // Queue this request until refresh completes
+      return new Promise((resolve, reject) => {
+        failedQueue.push({ resolve, reject });
+      })
+        .then((token) => {
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+          return apiClient(originalRequest);
+        })
+        .catch((err) => Promise.reject(err));
+    }
+
+    originalRequest._retry = true;
+    isRefreshing = true;
+
+    try {
+      const { data } = await apiClient.post<AuthResponse>(
+        "/api/v1/auth/refresh"
+      );
+      const newToken = data.access_token;
+
+      if (typeof window !== "undefined") {
+        localStorage.setItem("access_token", newToken);
+        localStorage.setItem("auth_user", JSON.stringify(data.user));
+      }
+
+      processQueue(null, newToken);
+      originalRequest.headers.Authorization = `Bearer ${newToken}`;
+      return apiClient(originalRequest);
+    } catch (refreshError) {
+      processQueue(refreshError, null);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("auth_user");
+        window.location.href = "/login";
+      }
+      return Promise.reject(refreshError);
+    } finally {
+      isRefreshing = false;
+    }
   }
 );
+
+// ── Checkout API ───────────────────────────────────────────────
+
+export interface Address {
+  id: string;
+  user_id: string;
+  type: string;
+  full_name: string;
+  phone: string;
+  line1: string;
+  line2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  is_default: boolean;
+}
+
+export interface AddressInput {
+  full_name: string;
+  phone: string;
+  line1: string;
+  line2?: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  is_default?: boolean;
+}
+
+export interface OrderItemResponse {
+  id: string;
+  product_id: string;
+  variant_id: string | null;
+  product_name: string | null;
+  product_slug: string | null;
+  quantity: number;
+  unit_price: string;
+  total_price: string;
+}
+
+export interface OrderResponse {
+  id: string;
+  status: string;
+  subtotal: string;
+  shipping_cost: string;
+  tax: string;
+  discount: string;
+  total: string;
+  coupon_code: string | null;
+  payment_session_id: string | null;
+  created_at: string | null;
+  items: OrderItemResponse[];
+}
+
+export interface CreateOrderInput {
+  shipping_address_id: string;
+  billing_address_id?: string;
+  coupon_code?: string;
+}
+
+export const checkoutApi = {
+  getAddresses: () =>
+    apiClient.get<Address[]>("/api/v1/users/me/addresses").then(({ data }) => data),
+  createAddress: (payload: AddressInput) =>
+    apiClient.post<Address>("/api/v1/users/me/addresses", payload).then(({ data }) => data),
+  createOrder: (payload: CreateOrderInput) =>
+    apiClient.post<OrderResponse>("/api/v1/orders", payload).then(({ data }) => data),
+  getOrder: (id: string) =>
+    apiClient.get<OrderResponse>(`/api/v1/orders/${id}`).then(({ data }) => data),
+};
+
+// ── Product API ────────────────────────────────────────────────
+
+export interface ProductListParams {
+  page?: number;
+  size?: number;
+  search?: string;
+  category?: string;
+  min_price?: number;
+  max_price?: number;
+  sort_by?: string;
+}
+
+export interface ProductListResponse {
+  items: Product[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface ProductDetailResponse extends Product {
+  category?: Category;
+}
+
+export async function fetchProducts(
+  params: ProductListParams = {}
+): Promise<ProductListResponse> {
+  const { data } = await apiClient.get<ProductListResponse>(
+    "/api/v1/products",
+    { params }
+  );
+  return data;
+}
+
+export async function fetchProductBySlug(
+  slug: string
+): Promise<ProductDetailResponse> {
+  const { data } = await apiClient.get<ProductDetailResponse>(
+    `/api/v1/products/${slug}`
+  );
+  return data;
+}
+
+export async function fetchCategories(): Promise<Category[]> {
+  const { data } = await apiClient.get<Category[]>(
+    "/api/v1/products/categories"
+  );
+  return data;
+}
 
 export default apiClient;

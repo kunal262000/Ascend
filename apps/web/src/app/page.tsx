@@ -2,10 +2,12 @@ import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { products, categories, formatPrice } from "@/lib/data";
+import { ProductCard } from "@/components/product-card";
+import { RecentlyViewed } from "@/components/recently-viewed";
+import { ArrowRight, Truck, RotateCcw, Shield, Headphones } from "lucide-react";
 
 export default function HomePage() {
   const featuredProducts = products.slice(0, 4);
-  const newArrivals = products.slice(4, 8);
 
   return (
     <div className="flex flex-col">
@@ -61,9 +63,7 @@ export default function HomePage() {
           <Button variant="ghost" className="hidden md:flex gap-2" asChild>
             <Link href="/products">
               View All
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
+              <ArrowRight className="w-4 h-4" />
             </Link>
           </Button>
         </div>
@@ -93,9 +93,7 @@ export default function HomePage() {
                 <p className="text-white/70 text-sm mb-3">{category.description}</p>
                 <span className="inline-flex items-center text-white text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                   Shop Now
-                  <svg className="w-4 h-4 ml-2 transform group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                  </svg>
+                  <ArrowRight className="w-4 h-4 ml-2 transform group-hover:translate-x-1 transition-transform" />
                 </span>
               </div>
             </Link>
@@ -114,42 +112,7 @@ export default function HomePage() {
           
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
             {featuredProducts.map((product, index) => (
-              <Link 
-                key={product.id} 
-                href={`/products/${product.slug}`}
-                className="group animate-fade-in"
-                style={{ animationDelay: `${index * 100}ms` }}
-              >
-                <div className="relative aspect-[3/4] bg-card rounded-xl overflow-hidden mb-4 shadow-sm group-hover:shadow-xl transition-shadow duration-300">
-                  <Image
-                    src={product.images[0]?.url || "/placeholder.png"}
-                    alt={product.name}
-                    fill
-                    className="object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors duration-300" />
-                  {product.compare_at_price && (
-                    <span className="absolute top-3 left-3 bg-black text-white text-xs font-bold px-3 py-1.5 rounded-full">
-                      -{Math.round(((product.compare_at_price - product.price) / product.compare_at_price) * 100)}%
-                    </span>
-                  )}
-                  <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                    <span className="text-white text-sm font-medium">Quick View</span>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-xs text-muted-foreground font-medium">{product.category?.name}</span>
-                  <h3 className="font-semibold line-clamp-1 group-hover:text-primary transition-colors">{product.name}</h3>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold">{formatPrice(product.price)}</span>
-                    {product.compare_at_price && (
-                      <span className="text-sm text-muted-foreground line-through">
-                        {formatPrice(product.compare_at_price)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </Link>
+              <ProductCard key={product.id} product={product} index={index} />
             ))}
           </div>
           
@@ -201,6 +164,8 @@ export default function HomePage() {
         </div>
       </section>
 
+      <RecentlyViewed />
+
       <section className="py-20 bg-black text-white">
         <div className="container px-4 mx-auto text-center">
           <span className="text-white/50 text-sm font-semibold tracking-wider uppercase">Stay Connected</span>
@@ -225,13 +190,15 @@ export default function HomePage() {
       <section className="py-16 container px-4 mx-auto">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
           {[
-            { icon: "🚚", title: "Free Shipping", desc: "On orders over ₹2000" },
-            { icon: "↩️", title: "Easy Returns", desc: "30-day return policy" },
-            { icon: "🔒", title: "Secure Payment", desc: "SSL encrypted checkout" },
-            { icon: "💬", title: "24/7 Support", desc: "Always here to help" },
+            { icon: Truck, title: "Free Shipping", desc: "On orders over ₹2000" },
+            { icon: RotateCcw, title: "Easy Returns", desc: "30-day return policy" },
+            { icon: Shield, title: "Secure Payment", desc: "SSL encrypted checkout" },
+            { icon: Headphones, title: "24/7 Support", desc: "Always here to help" },
           ].map((feature, index) => (
             <div key={index} className="animate-fade-in" style={{ animationDelay: `${index * 100}ms` }}>
-              <span className="text-3xl mb-3 block">{feature.icon}</span>
+              <div className="w-14 h-14 bg-secondary/50 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <feature.icon className="h-6 w-6 text-primary" />
+              </div>
               <h3 className="font-semibold mb-1">{feature.title}</h3>
               <p className="text-sm text-muted-foreground">{feature.desc}</p>
             </div>

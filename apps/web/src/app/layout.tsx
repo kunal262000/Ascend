@@ -3,6 +3,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { Header } from "@/components/header";
 import { CartSheet } from "@/components/cart-sheet";
+import { MobileNav } from "@/components/mobile-nav";
 
 export const metadata: Metadata = {
   title: "ASCEND — Premium Streetwear",
@@ -20,12 +21,18 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="scroll-smooth">
-      <body className="min-h-screen bg-background antialiased">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+      </head>
+      <body className="min-h-screen bg-background antialiased pb-16 md:pb-0">
         <Providers>
           <Header />
           <main className="pt-16">{children}</main>
+          <MobileNav />
           <CartSheet />
-          <footer className="border-t bg-card mt-20">
+          <footer className="border-t bg-card mt-20 hidden md:block">
             <div className="container px-4 py-12 mx-auto">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
                 <div>

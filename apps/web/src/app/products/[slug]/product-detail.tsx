@@ -1,14 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Product } from "@ascend/shared";
 import { useCart } from "@/lib/cart-context";
+import { useToast } from "@/lib/toast-context";
+import { useRecentlyViewed } from "@/lib/use-recently-viewed";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { formatPrice } from "@/lib/data";
-import { Heart, Share2, Truck, RotateCcw, Shield, Check, ChevronRight, Minus, Plus } from "lucide-react";
+import { Heart, Share2, Truck, RotateCcw, Shield, Check, ChevronRight, Minus, Plus, Ruler, Clock } from "lucide-react";
+import { SizeGuideModal } from "@/components/size-guide-modal";
 
 interface ProductDetailProps {
   product: Product;
@@ -16,6 +19,8 @@ interface ProductDetailProps {
 
 export default function ProductDetail({ product }: ProductDetailProps) {
   const { addItem } = useCart();
+  const { addToast } = useToast();
+  const { addToRecentlyViewed } = useRecentlyViewed();
   const [selectedImage, setSelectedImage] = useState(0);
   const [selectedColor, setSelectedColor] = useState<string | null>(
     product.variants.find((v) => v.color)?.color || null
@@ -26,6 +31,11 @@ export default function ProductDetail({ product }: ProductDetailProps) {
   const [quantity, setQuantity] = useState(1);
   const [isAdding, setIsAdding] = useState(false);
   const [selectedTab, setSelectedTab] = useState<"description" | "details" | "shipping">("description");
+  const [showSizeGuide, setShowSizeGuide] = useState(false);
+
+  useEffect(() => {
+    addToRecentlyViewed(product.slug);
+  }, [product.slug, addToRecentlyViewed]);
 
   const colors = [...new Set(product.variants.map((v) => v.color).filter(Boolean))];
   const sizes = [...new Set(product.variants.map((v) => v.size).filter(Boolean))];
@@ -35,7 +45,10 @@ export default function ProductDetail({ product }: ProductDetailProps) {
   );
 
   const handleAddToCart = async () => {
-    if (!selectedVariant) return;
+    if (!selectedVariant) {
+      addToast("error", "Please select size and color");
+      return;
+    }
     
     setIsAdding(true);
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -54,6 +67,7 @@ export default function ProductDetail({ product }: ProductDetailProps) {
       variant: selectedVariant,
     });
     
+    addToast("cart", "Added to cart", product.name);
     setIsAdding(false);
   };
 
@@ -78,7 +92,7 @@ export default function ProductDetail({ product }: ProductDetailProps) {
 
       <div className="grid lg:grid-cols-2 gap-8 lg:gap-16">
         <div className="space-y-4 animate-fade-in">
-          <div className="relative aspect-square bg-secondary rounded-2xl overflow-hidden group">
+          <div className="relative aspect-square bg-secondary/50 rounded-2xl overflow-hidden group">
             <Image
               src={product.images[selectedImage]?.url || "/placeholder.png"}
               alt={product.images[selectedImage]?.alt_text || product.name}
@@ -94,10 +108,10 @@ export default function ProductDetail({ product }: ProductDetailProps) {
               </div>
             )}
             <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button variant="secondary" size="icon" className="rounded-full bg-white/90 backdrop-blur-sm hover:bg-white">
+              <Button variant="secondary" size="icon" className="rounded-full bg-white/90 backdrop-blur-sm hover:bg-white shadow-lg">
                 <Heart className="h-5 w-5" />
               </Button>
-              <Button variant="secondary" size="icon" className="rounded-full bg-white/90 backdrop-blur-sm hover:bg-white">
+              <Button variant="secondary" size="icon" className="rounded-full bg-white/90 backdrop-blur-sm hover:bg-white shadow-lg">
                 <Share2 className="h-5 w-5" />
               </Button>
             </div>
@@ -194,7 +208,13 @@ export default function ProductDetail({ product }: ProductDetailProps) {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="font-semibold">Size</span>
-                <button className="text-sm text-primary hover:underline font-medium">Size Guide</button>
+                <button 
+                  onClick={() => setShowSizeGuide(true)}
+                  className="text-sm text-primary hover:underline font-medium flex items-center gap-1"
+                >
+                  <Ruler className="w-4 h-4" />
+                  Size Guide
+                </button>
               </div>
               <div className="flex flex-wrap gap-3">
                 {sizes.map((size) => {
@@ -246,7 +266,8 @@ export default function ProductDetail({ product }: ProductDetailProps) {
                 </Button>
               </div>
               {selectedVariant && selectedVariant.stock < 10 && selectedVariant.stock > 0 && (
-                <span className="text-sm text-orange-600 font-medium animate-pulse">
+                <span className="text-sm text-orange-600 font-medium flex items-center gap-1 animate-pulse">
+                  <Clock className="w-4 h-4" />
                   Only {selectedVariant.stock} left in stock!
                 </span>
               )}
@@ -367,6 +388,8 @@ export default function ProductDetail({ product }: ProductDetailProps) {
           </div>
         </div>
       </div>
+
+      <SizeGuideModal isOpen={showSizeGuide} onClose={() => setShowSizeGuide(false)} />
     </div>
   );
 }
