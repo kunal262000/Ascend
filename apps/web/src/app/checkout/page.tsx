@@ -1,581 +1,496 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import {
-  CreditCard,
-  Loader2,
-  Lock,
-  MapPin,
-  Package,
-  Plus,
-  ShoppingBag,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useAuth } from "@/contexts/auth-context";
-import { useCart } from "@/contexts/cart-context";
-import { useRequireAuth } from "@/hooks/use-require-auth";
-import { checkoutApi, type Address } from "@/lib/api";
+import { useCart } from "@/lib/cart-context";
+import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { formatPrice } from "@/lib/data";
+import { Check, ChevronLeft, Lock, CreditCard, Truck, Package, ShieldCheck } from "lucide-react";
 
-// ── Pricing (mirrors backend/app/api/v1/orders.py) ─────────────
+type CheckoutStep = "shipping" | "payment" | "review";
 
-const SHIPPING_FEE = 99;
-const FREE_SHIPPING_THRESHOLD = 999;
-const GST_RATE = 0.18;
-
-// The order API does not return the shipping address, so we stash the
-// selected address here for the /orders/[id] confirmation page.
-const ADDRESS_STORAGE_KEY = "ascend_checkout_address";
-
-function formatINR(amount: number): string {
-  return `₹${amount.toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function extractErrorMessage(err: unknown): string {
-  const detail = (err as { response?: { data?: { detail?: unknown } } })
-    ?.response?.data?.detail;
-  if (typeof detail === "string") return detail;
-  return "Something went wrong. Please try again.";
-}
-
-// ── Address form ───────────────────────────────────────────────
-
-const addressSchema = z.object({
-  full_name: z.string().min(1, "Full name is required"),
-  phone: z
-    .string()
-    .min(10, "Enter a valid phone number")
-    .regex(/^[0-9+\-\s]{10,15}$/, "Enter a valid phone number"),
-  line1: z.string().min(1, "Address line 1 is required"),
-  line2: z.string().optional(),
-  city: z.string().min(1, "City is required"),
-  state: z.string().min(1, "State is required"),
-  pincode: z
-    .string()
-    .regex(/^\d{6}$/, "Enter a valid 6-digit pincode"),
-});
-
-type AddressForm = z.infer<typeof addressSchema>;
-
-function AddressFormFields({
-  form,
-  errors,
-}: {
-  form: ReturnType<typeof useForm<AddressForm>>["register"];
-  errors: Partial<Record<keyof AddressForm, { message?: string } | undefined>>;
-}) {
-  return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      <div className="space-y-2">
-        <Label htmlFor="full_name">Full name</Label>
-        <Input id="full_name" placeholder="Aarav Sharma" {...form("full_name")} />
-        {errors.full_name && (
-          <p className="text-sm text-destructive">{errors.full_name.message}</p>
-        )}
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="phone">Phone</Label>
-        <Input id="phone" placeholder="98765 43210" inputMode="tel" {...form("phone")} />
-        {errors.phone && (
-          <p className="text-sm text-destructive">{errors.phone.message}</p>
-        )}
-      </div>
-      <div className="space-y-2 sm:col-span-2">
-        <Label htmlFor="line1">Address line 1</Label>
-        <Input id="line1" placeholder="Flat / House no, Street" {...form("line1")} />
-        {errors.line1 && (
-          <p className="text-sm text-destructive">{errors.line1.message}</p>
-        )}
-      </div>
-      <div className="space-y-2 sm:col-span-2">
-        <Label htmlFor="line2">Address line 2 (optional)</Label>
-        <Input id="line2" placeholder="Area, Landmark" {...form("line2")} />
-        {errors.line2 && (
-          <p className="text-sm text-destructive">{errors.line2.message}</p>
-        )}
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="city">City</Label>
-        <Input id="city" placeholder="Mumbai" {...form("city")} />
-        {errors.city && (
-          <p className="text-sm text-destructive">{errors.city.message}</p>
-        )}
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="state">State</Label>
-        <Input id="state" placeholder="Maharashtra" {...form("state")} />
-        {errors.state && (
-          <p className="text-sm text-destructive">{errors.state.message}</p>
-        )}
-      </div>
-      <div className="space-y-2 sm:col-span-2">
-        <Label htmlFor="pincode">Pincode</Label>
-        <Input
-          id="pincode"
-          placeholder="400001"
-          inputMode="numeric"
-          maxLength={6}
-          {...form("pincode")}
-        />
-        {errors.pincode && (
-          <p className="text-sm text-destructive">{errors.pincode.message}</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Loading skeleton ───────────────────────────────────────────
-
-function CheckoutSkeleton() {
-  return (
-    <div className="container mx-auto px-4 py-8 md:py-12">
-      <Skeleton className="h-8 w-44" />
-      <Skeleton className="mt-2 h-4 w-64" />
-      <div className="mt-8 grid gap-8 lg:grid-cols-5">
-        <div className="space-y-6 lg:col-span-3">
-          <Skeleton className="h-64 w-full rounded-lg" />
-          <Skeleton className="h-80 w-full rounded-lg" />
-        </div>
-        <div className="lg:col-span-2">
-          <Skeleton className="h-96 w-full rounded-lg" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Page ───────────────────────────────────────────────────────
+const steps: { id: CheckoutStep; label: string; icon: React.ReactNode }[] = [
+  { id: "shipping", label: "Shipping", icon: <Truck className="h-5 w-5" /> },
+  { id: "payment", label: "Payment", icon: <CreditCard className="h-5 w-5" /> },
+  { id: "review", label: "Review", icon: <ShieldCheck className="h-5 w-5" /> },
+];
 
 export default function CheckoutPage() {
-  const { isAuthenticated, isLoading } = useRequireAuth();
-  const { user } = useAuth();
   const router = useRouter();
-  const { items, subtotal, clearCart, closeCart } = useCart();
+  const { items, subtotal, clearCart } = useCart();
+  const { isAuthenticated } = useAuth();
+  const [currentStep, setCurrentStep] = useState<CheckoutStep>("shipping");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [orderComplete, setOrderComplete] = useState(false);
+  const [orderId, setOrderId] = useState("");
 
-  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
-  const [showAddressForm, setShowAddressForm] = useState(false);
-  const [addressError, setAddressError] = useState<string | null>(null);
-  const [orderError, setOrderError] = useState<string | null>(null);
-  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
-
-  // Close the cart sheet if it was left open when navigating here.
-  useEffect(() => {
-    closeCart();
-  }, [closeCart]);
-
-  const addressesQuery = useQuery({
-    queryKey: ["addresses"],
-    queryFn: checkoutApi.getAddresses,
-    enabled: isAuthenticated && !isLoading,
+  const [shippingAddress, setShippingAddress] = useState({
+    fullName: "",
+    phone: "",
+    line1: "",
+    line2: "",
+    city: "",
+    state: "",
+    pincode: "",
   });
 
-  const addresses = addressesQuery.data ?? [];
-
-  // Pre-select the default address (or the first one).
-  useEffect(() => {
-    if (selectedAddressId || addresses.length === 0) return;
-    const preferred = addresses.find((a) => a.is_default) ?? addresses[0];
-    setSelectedAddressId(preferred.id);
-  }, [addresses, selectedAddressId]);
-
-  const selectedAddress = useMemo(
-    () => addresses.find((a) => a.id === selectedAddressId) ?? null,
-    [addresses, selectedAddressId]
-  );
-
-  // ── Pricing breakdown ────────────────────────────────────────
-
-  const shippingCost = subtotal > FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE;
-  const tax = Math.round((subtotal + shippingCost) * GST_RATE * 100) / 100;
-  const total = Math.round((subtotal + shippingCost + tax) * 100) / 100;
-
-  // ── Address form ─────────────────────────────────────────────
-
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors, isSubmitting },
-  } = useForm<AddressForm>({
-    resolver: zodResolver(addressSchema),
+  const [paymentInfo, setPaymentInfo] = useState({
+    cardNumber: "",
+    expiry: "",
+    cvv: "",
+    nameOnCard: "",
   });
 
-  const onCreateAddress = async (data: AddressForm) => {
-    setAddressError(null);
-    try {
-      const created = await checkoutApi.createAddress({
-        full_name: data.full_name,
-        phone: data.phone,
-        line1: data.line1,
-        line2: data.line2?.trim() ? data.line2 : null,
-        city: data.city,
-        state: data.state,
-        pincode: data.pincode,
-      });
-      await addressesQuery.refetch();
-      setSelectedAddressId(created.id);
-      setShowAddressForm(false);
-      reset();
-    } catch (err) {
-      setAddressError(extractErrorMessage(err));
-    }
+  const shippingCost = subtotal > 2000 ? 0 : 99;
+  const tax = Math.round(subtotal * 0.18);
+  const total = subtotal + shippingCost + tax;
+
+  const currentStepIndex = steps.findIndex((s) => s.id === currentStep);
+
+  const handleShippingSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCurrentStep("payment");
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // ── Place order ──────────────────────────────────────────────
-
-  const onPlaceOrder = async () => {
-    if (!selectedAddress) return;
-    setOrderError(null);
-    setIsPlacingOrder(true);
-    try {
-      const order = await checkoutApi.createOrder({
-        shipping_address_id: selectedAddress.id,
-        billing_address_id: selectedAddress.id,
-      });
-      sessionStorage.setItem(ADDRESS_STORAGE_KEY, JSON.stringify(selectedAddress));
-      clearCart();
-      router.push(`/orders/${order.id}`);
-    } catch (err) {
-      setOrderError(extractErrorMessage(err));
-      setIsPlacingOrder(false);
-    }
+  const handlePaymentSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCurrentStep("review");
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // ── Auth guard ───────────────────────────────────────────────
+  const handlePlaceOrder = async () => {
+    setIsProcessing(true);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const newOrderId = `ORD-${Date.now().toString(36).toUpperCase()}`;
+    setOrderId(newOrderId);
+    setOrderComplete(true);
+    clearCart();
+    setIsProcessing(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
-  if (isLoading || !isAuthenticated) {
-    return <CheckoutSkeleton />;
-  }
-
-  // ── Empty cart ───────────────────────────────────────────────
-
-  if (items.length === 0) {
+  if (items.length === 0 && !orderComplete) {
     return (
-      <div className="container mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center px-4 py-16 text-center">
-        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-secondary">
-          <ShoppingBag className="h-8 w-8 text-muted-foreground" />
+      <div className="container px-4 py-24 text-center max-w-lg mx-auto animate-fade-in">
+        <div className="w-20 h-20 bg-secondary rounded-full flex items-center justify-center mx-auto mb-6">
+          <Package className="h-10 w-10 text-muted-foreground" />
         </div>
-        <h1 className="text-2xl font-bold tracking-tight">Your cart is empty</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Add something to your cart before heading to checkout.
-        </p>
-        <Button asChild className="mt-6">
+        <h1 className="text-2xl font-bold mb-4">Your cart is empty</h1>
+        <p className="text-muted-foreground mb-8">Add some items to checkout</p>
+        <Button size="lg" asChild>
           <Link href="/products">Continue Shopping</Link>
         </Button>
       </div>
     );
   }
 
-  return (
-    <div className="container mx-auto px-4 py-8 md:py-12">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Checkout</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {user?.full_name ? `${user.full_name} — ` : ""}almost there
+  if (orderComplete) {
+    return (
+      <div className="container px-4 py-24 text-center max-w-lg mx-auto animate-fade-in">
+        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+          <Check className="h-10 w-10 text-green-600" />
+        </div>
+        <h1 className="text-3xl font-bold mb-3">Order Confirmed!</h1>
+        <p className="text-muted-foreground mb-2">Thank you for your purchase</p>
+        <p className="font-semibold text-lg mb-2">Order ID: {orderId}</p>
+        <p className="text-sm text-muted-foreground mb-8">
+          We'll send you a confirmation email with tracking details shortly.
         </p>
+        <div className="space-y-3">
+          <Button className="w-full" size="lg" asChild>
+            <Link href="/account/orders">View Orders</Link>
+          </Button>
+          <Button variant="outline" className="w-full" size="lg" asChild>
+            <Link href="/products">Continue Shopping</Link>
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="container px-4 py-8 lg:py-12">
+      <h1 className="text-2xl md:text-3xl font-bold mb-8 text-center">Checkout</h1>
+
+      {!isAuthenticated && (
+        <div className="mb-8 p-5 bg-secondary/50 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 max-w-2xl mx-auto">
+          <p className="text-sm">Already have an account?</p>
+          <Button variant="outline" className="w-full sm:w-auto" asChild>
+            <Link href="/login?redirect=/checkout">Sign In</Link>
+          </Button>
+        </div>
+      )}
+
+      <div className="flex items-center justify-center mb-12 max-w-2xl mx-auto">
+        {steps.map((step, index) => (
+          <div key={step.id} className="flex items-center">
+            <div className="flex flex-col items-center">
+              <div
+                className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 ${
+                  index < currentStepIndex
+                    ? "bg-green-500 text-white"
+                    : index === currentStepIndex
+                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/30"
+                    : "bg-secondary text-muted-foreground"
+                }`}
+              >
+                {index < currentStepIndex ? <Check className="h-6 w-6" /> : step.icon}
+              </div>
+              <span className={`text-xs font-medium mt-2 ${index === currentStepIndex ? "text-foreground" : "text-muted-foreground"}`}>
+                {step.label}
+              </span>
+            </div>
+            {index < steps.length - 1 && (
+              <div className={`w-16 md:w-24 h-0.5 mx-2 transition-colors duration-300 ${
+                index < currentStepIndex ? "bg-green-500" : "bg-border"
+              }`} />
+            )}
+          </div>
+        ))}
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-5">
-        {/* ── Left column ─────────────────────────────────────── */}
-        <div className="space-y-8 lg:col-span-3">
-          {/* Shipping address */}
-          <Card>
-            <CardHeader className="flex flex-row items-start justify-between space-y-0">
-              <div>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <MapPin className="h-4 w-4 text-accent" />
-                  Shipping Address
-                </CardTitle>
-                <CardDescription className="mt-1">
-                  Where should we deliver your order?
-                </CardDescription>
-              </div>
-              {addresses.length > 0 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setShowAddressForm((v) => !v);
-                    setAddressError(null);
-                  }}
-                >
-                  <Plus className="mr-1 h-4 w-4" />
-                  {showAddressForm ? "Cancel" : "Add new"}
+      <div className="grid lg:grid-cols-5 gap-8 max-w-6xl mx-auto">
+        <div className="lg:col-span-3">
+          <div className="bg-card rounded-2xl border p-6 md:p-8 shadow-sm animate-fade-in">
+            {currentStep === "shipping" && (
+              <form onSubmit={handleShippingSubmit} className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-bold mb-1">Shipping Address</h2>
+                  <p className="text-sm text-muted-foreground">Where should we send your order?</p>
+                </div>
+                
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="fullName">Full Name</Label>
+                    <Input
+                      id="fullName"
+                      placeholder="John Doe"
+                      value={shippingAddress.fullName}
+                      onChange={(e) =>
+                        setShippingAddress((prev) => ({ ...prev, fullName: e.target.value }))
+                      }
+                      required
+                      className="h-12"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Phone</Label>
+                    <Input
+                      id="phone"
+                      type="tel"
+                      placeholder="+91 9876543210"
+                      value={shippingAddress.phone}
+                      onChange={(e) =>
+                        setShippingAddress((prev) => ({ ...prev, phone: e.target.value }))
+                      }
+                      required
+                      className="h-12"
+                    />
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="line1">Address Line 1</Label>
+                  <Input
+                    id="line1"
+                    placeholder="123 Main Street"
+                    value={shippingAddress.line1}
+                    onChange={(e) =>
+                      setShippingAddress((prev) => ({ ...prev, line1: e.target.value }))
+                    }
+                    required
+                    className="h-12"
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="line2">Address Line 2 (Optional)</Label>
+                  <Input
+                    id="line2"
+                    placeholder="Apartment, suite, etc."
+                    value={shippingAddress.line2}
+                    onChange={(e) =>
+                      setShippingAddress((prev) => ({ ...prev, line2: e.target.value }))
+                    }
+                    className="h-12"
+                  />
+                </div>
+                
+                <div className="grid md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="city">City</Label>
+                    <Input
+                      id="city"
+                      placeholder="Mumbai"
+                      value={shippingAddress.city}
+                      onChange={(e) =>
+                        setShippingAddress((prev) => ({ ...prev, city: e.target.value }))
+                      }
+                      required
+                      className="h-12"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="state">State</Label>
+                    <Input
+                      id="state"
+                      placeholder="Maharashtra"
+                      value={shippingAddress.state}
+                      onChange={(e) =>
+                        setShippingAddress((prev) => ({ ...prev, state: e.target.value }))
+                      }
+                      required
+                      className="h-12"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="pincode">PIN Code</Label>
+                    <Input
+                      id="pincode"
+                      placeholder="400001"
+                      value={shippingAddress.pincode}
+                      onChange={(e) =>
+                        setShippingAddress((prev) => ({ ...prev, pincode: e.target.value }))
+                      }
+                      required
+                      className="h-12"
+                    />
+                  </div>
+                </div>
+                
+                <Button type="submit" size="lg" className="w-full h-14 rounded-xl">
+                  Continue to Payment
                 </Button>
-              )}
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {addressesQuery.isLoading ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-24 w-full rounded-lg" />
-                  <Skeleton className="h-24 w-full rounded-lg" />
-                </div>
-              ) : addressesQuery.isError ? (
-                <div className="rounded-md bg-destructive/10 px-4 py-6 text-center">
-                  <p className="text-sm text-destructive">
-                    Couldn&apos;t load your addresses.
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => addressesQuery.refetch()}
-                  >
-                    Retry
-                  </Button>
-                </div>
-              ) : addresses.length === 0 && !showAddressForm ? (
-                <div className="rounded-md bg-secondary/50 px-4 py-6 text-center">
-                  <p className="text-sm font-medium">No saved addresses yet</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Add a delivery address to continue.
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => setShowAddressForm(true)}
-                  >
-                    <Plus className="mr-1 h-4 w-4" />
-                    Add address
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {addresses.map((address) => {
-                    const selected = address.id === selectedAddressId;
-                    return (
-                      <label
-                        key={address.id}
-                        className={cn(
-                          "flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors",
-                          selected
-                            ? "border-accent bg-accent/5 ring-1 ring-accent"
-                            : "border-border hover:border-muted-foreground/40"
-                        )}
-                      >
-                        <input
-                          type="radio"
-                          name="shipping-address"
-                          value={address.id}
-                          checked={selected}
-                          onChange={() => setSelectedAddressId(address.id)}
-                          className="mt-1 h-4 w-4 accent-[#d4a574]"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-medium">{address.full_name}</p>
-                            {address.is_default && (
-                              <Badge variant="secondary">Default</Badge>
-                            )}
-                          </div>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {address.line1}
-                            {address.line2 ? `, ${address.line2}` : ""}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {address.city}, {address.state} — {address.pincode}
-                          </p>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            Phone: {address.phone}
-                          </p>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
+              </form>
+            )}
 
-              {/* Add-new address form */}
-              {showAddressForm && (
-                <div className="rounded-lg border border-dashed p-4">
-                  <p className="mb-4 text-sm font-medium">Add a new address</p>
-                  <form
-                    onSubmit={handleSubmit(onCreateAddress)}
-                    className="space-y-4"
-                    noValidate
-                  >
-                    <AddressFormFields form={register} errors={errors} />
-                    {addressError && (
-                      <p className="text-sm text-destructive">{addressError}</p>
-                    )}
-                    <div className="flex justify-end gap-3">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setShowAddressForm(false);
-                          setAddressError(null);
-                          reset();
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button type="submit" size="sm" disabled={isSubmitting}>
-                        {isSubmitting ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : null}
-                        Save Address
-                      </Button>
+            {currentStep === "payment" && (
+              <form onSubmit={handlePaymentSubmit} className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-bold mb-1">Payment Method</h2>
+                  <p className="text-sm text-muted-foreground">All transactions are secure and encrypted</p>
+                </div>
+                
+                <div className="p-4 border-2 rounded-xl bg-secondary/30">
+                  <div className="flex items-center gap-3">
+                    <input type="radio" name="payment" id="card" checked readOnly className="accent-primary" />
+                    <Label htmlFor="card" className="font-semibold cursor-pointer">Credit / Debit Card</Label>
+                    <div className="ml-auto flex gap-1">
+                      <div className="w-10 h-6 bg-blue-600 rounded flex items-center justify-center text-white text-xs font-bold">VISA</div>
+                      <div className="w-10 h-6 bg-red-500 rounded flex items-center justify-center text-white text-xs font-bold">MC</div>
                     </div>
-                  </form>
+                  </div>
+                  
+                  <div className="mt-4 space-y-4 pl-7">
+                    <div className="space-y-2">
+                      <Label htmlFor="nameOnCard">Name on Card</Label>
+                      <Input
+                        id="nameOnCard"
+                        placeholder="JOHN DOE"
+                        value={paymentInfo.nameOnCard}
+                        onChange={(e) =>
+                          setPaymentInfo((prev) => ({ ...prev, nameOnCard: e.target.value }))
+                        }
+                        required
+                        className="h-12"
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="cardNumber">Card Number</Label>
+                      <Input
+                        id="cardNumber"
+                        placeholder="1234 5678 9012 3456"
+                        value={paymentInfo.cardNumber}
+                        onChange={(e) =>
+                          setPaymentInfo((prev) => ({ ...prev, cardNumber: e.target.value }))
+                        }
+                        required
+                        className="h-12 font-mono"
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="expiry">Expiry Date</Label>
+                        <Input
+                          id="expiry"
+                          placeholder="MM/YY"
+                          value={paymentInfo.expiry}
+                          onChange={(e) =>
+                            setPaymentInfo((prev) => ({ ...prev, expiry: e.target.value }))
+                          }
+                          required
+                          className="h-12"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="cvv">CVV</Label>
+                        <Input
+                          id="cvv"
+                          type="password"
+                          maxLength={4}
+                          placeholder="123"
+                          value={paymentInfo.cvv}
+                          onChange={(e) =>
+                            setPaymentInfo((prev) => ({ ...prev, cvv: e.target.value }))
+                          }
+                          required
+                          className="h-12"
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+                
+                <div className="flex gap-4">
+                  <Button type="button" variant="outline" size="lg" onClick={() => setCurrentStep("shipping")} className="h-14 rounded-xl">
+                    <ChevronLeft className="h-4 w-4 mr-2" />
+                    Back
+                  </Button>
+                  <Button type="submit" size="lg" className="flex-1 h-14 rounded-xl">
+                    Review Order
+                  </Button>
+                </div>
+              </form>
+            )}
 
-          {/* Order items (read-only) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Package className="h-4 w-4 text-accent" />
-                Your Order
-              </CardTitle>
-              <CardDescription className="mt-1">
-                {items.length} item{items.length !== 1 ? "s" : ""} in your cart
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ul className="divide-y divide-border">
-                {items.map((item) => {
-                  const unitPrice =
-                    Number(item.product.price) +
-                    Number(item.variant?.price_adjustment ?? 0);
-                  const lineTotal = unitPrice * item.quantity;
-                  return (
-                    <li
-                      key={item.id}
-                      className="flex items-center gap-4 py-4 first:pt-0 last:pb-0"
-                    >
-                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-md bg-secondary">
-                        {item.product.images?.[0]?.url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={item.product.images[0].url}
-                            alt={item.product.images[0].alt_text || item.product.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xs font-medium uppercase text-muted-foreground">
-                            {item.product.name.slice(0, 2)}
-                          </div>
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <Link
-                          href={`/products/${item.product.slug}`}
-                          className="line-clamp-1 text-sm font-medium hover:underline"
-                        >
-                          {item.product.name}
-                        </Link>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {item.variant
-                            ? `${item.variant.size}${item.variant.color ? ` / ${item.variant.color}` : ""}`
-                            : "Default"}
-                          {" · "}Qty {item.quantity}
-                        </p>
-                        <p className="mt-1 text-sm font-semibold">
-                          {formatINR(lineTotal)}
-                        </p>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </CardContent>
-          </Card>
+            {currentStep === "review" && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-bold mb-1">Review Your Order</h2>
+                  <p className="text-sm text-muted-foreground">Please confirm your order details</p>
+                </div>
+
+                <div className="border rounded-xl p-5 space-y-3">
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <Truck className="h-4 w-4" />
+                    Shipping Address
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    {shippingAddress.fullName}<br />
+                    {shippingAddress.line1}<br />
+                    {shippingAddress.line2 && <>{shippingAddress.line2}<br /></>}
+                    {shippingAddress.city}, {shippingAddress.state} - {shippingAddress.pincode}<br />
+                    Phone: {shippingAddress.phone}
+                  </p>
+                  <Button variant="link" className="p-0 h-auto text-sm text-primary" onClick={() => setCurrentStep("shipping")}>
+                    Edit
+                  </Button>
+                </div>
+
+                <div className="border rounded-xl p-5 space-y-3">
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <CreditCard className="h-4 w-4" />
+                    Payment Method
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Card ending in {paymentInfo.cardNumber.slice(-4) || "****"}
+                  </p>
+                  <Button variant="link" className="p-0 h-auto text-sm text-primary" onClick={() => setCurrentStep("payment")}>
+                    Edit
+                  </Button>
+                </div>
+
+                <div className="flex gap-4">
+                  <Button type="button" variant="outline" size="lg" onClick={() => setCurrentStep("payment")} className="h-14 rounded-xl">
+                    <ChevronLeft className="h-4 w-4 mr-2" />
+                    Back
+                  </Button>
+                  <Button 
+                    size="lg" 
+                    className="flex-1 h-14 rounded-xl shadow-lg shadow-primary/25" 
+                    onClick={handlePlaceOrder} 
+                    disabled={isProcessing}
+                  >
+                    {isProcessing ? (
+                      <span className="flex items-center gap-2">
+                        <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Processing...
+                      </span>
+                    ) : (
+                      `Place Order - ${formatPrice(total)}`
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* ── Right column: summary ───────────────────────────── */}
         <div className="lg:col-span-2">
-          <div className="lg:sticky lg:top-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Order Summary</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Subtotal</span>
-                  <span className="font-medium">{formatINR(subtotal)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Shipping</span>
-                  <span className="font-medium">
-                    {shippingCost === 0 ? (
-                      <span className="text-emerald-600">FREE</span>
-                    ) : (
-                      formatINR(shippingCost)
-                    )}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Tax (18% GST)</span>
-                  <span className="font-medium">{formatINR(tax)}</span>
-                </div>
-                <Separator />
-                <div className="flex justify-between text-base font-semibold">
-                  <span>Total</span>
-                  <span>{formatINR(total)}</span>
-                </div>
-                {subtotal <= FREE_SHIPPING_THRESHOLD && (
-                  <p className="text-xs text-muted-foreground">
-                    Add {formatINR(FREE_SHIPPING_THRESHOLD - subtotal)} more for free
-                    shipping.
-                  </p>
-                )}
-
-                {orderError && (
-                  <div className="rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                    {orderError}
+          <div className="bg-card rounded-2xl border p-6 shadow-sm sticky top-24 animate-slide-up">
+            <h2 className="font-bold text-lg mb-4">Order Summary</h2>
+            
+            <div className="space-y-4 max-h-[300px] overflow-y-auto mb-4">
+              {items.map((item) => (
+                <div key={item.id} className="flex gap-4">
+                  <div className="relative w-20 h-20 bg-secondary rounded-lg overflow-hidden flex-shrink-0">
+                    <Image
+                      src={item.product.images[0]?.url || "/placeholder.png"}
+                      alt={item.product.name}
+                      fill
+                      className="object-cover"
+                    />
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-primary text-primary-foreground rounded-full text-xs flex items-center justify-center font-bold">
+                      {item.quantity}
+                    </span>
                   </div>
-                )}
-
-                <Button
-                  className="w-full"
-                  size="lg"
-                  disabled={!selectedAddress || isPlacingOrder}
-                  onClick={onPlaceOrder}
-                >
-                  {isPlacingOrder ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
-                  {isPlacingOrder ? "Placing Order…" : "Place Order"}
-                </Button>
-
-                <div className="flex items-center justify-center gap-2 pt-1 text-xs text-muted-foreground">
-                  <Lock className="h-3.5 w-3.5" />
-                  <span>Secure checkout · UPI, Cards, Wallets, COD</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm line-clamp-1">{item.product.name}</p>
+                    <p className="text-xs text-muted-foreground">{item.variant.color} / {item.variant.size}</p>
+                    <p className="text-sm font-semibold mt-1">
+                      {formatPrice((item.product.price + item.variant.price_adjustment) * item.quantity)}
+                    </p>
+                  </div>
                 </div>
-                <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                  <CreditCard className="h-3.5 w-3.5" />
-                  <span>Payments powered by Cashfree</span>
-                </p>
-              </CardContent>
-            </Card>
+              ))}
+            </div>
+
+            <Separator className="my-4" />
+
+            <div className="space-y-2.5 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span className="font-medium">{formatPrice(subtotal)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Shipping</span>
+                <span className="font-medium">
+                  {shippingCost === 0 ? (
+                    <span className="text-green-600">Free</span>
+                  ) : (
+                    formatPrice(shippingCost)
+                  )}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Tax (GST 18%)</span>
+                <span className="font-medium">{formatPrice(tax)}</span>
+              </div>
+            </div>
+
+            <Separator className="my-4" />
+
+            <div className="flex justify-between items-center">
+              <span className="text-lg font-bold">Total</span>
+              <span className="text-2xl font-bold">{formatPrice(total)}</span>
+            </div>
+
+            <div className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
+              <Lock className="h-4 w-4" />
+              <span>Secure 256-bit SSL encryption</span>
+            </div>
           </div>
         </div>
       </div>
